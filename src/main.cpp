@@ -1,4 +1,8 @@
 #include <Arduino.h>
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <stdio.h>
+#include <float.h>
 #include "DHT.h"
 #include "Wire.h"
 #include "SPI.h"
@@ -13,13 +17,117 @@ int pinoBomba = 23;
 
 DHT dht(DHTPIN, DHTTYPE);
 
+//WiFi
+const char* SSID = "timHabay";
+const char* PASSWORD = "@@32822776@@";
+WiFiClient wifiClient;
 
-float fazLeituraUmidadeSolo(void);
+//MQTT
+const char* BROKER_MQTT = "mqtt.eclipse.org";
+int BROKER_PORT = 1883;
+
+#define ID_MQTT "UMID01"
+#define TOPIC_UMIDADE_AR "TopUmidadeAR"
+#define TOPIC_UMIDADE_SOLO "TopUmidadeSolo"
+#define TOPIC_LDR "TopLDR"
+#define TOPIC_NIVEL_BOIA "TopNivelBoia"
+#define TOPIC_TEMP "TopTemperatura"
+#define TOPIC_SUBSCRIBE "TopBomba"
+
+PubSubClient MQTT(wifiClient);
+
+void fazLeituraUmidadeSolo(void);
 void fazLeituraUmidadeTempAR();
 int isTanqueVazio(void);
 void fazLeituraLDR();
 
-float fazLeituraUmidadeSolo(void)
+void mantemConexoes();
+void conectaWiFi();
+void conectaMQTT();
+void enviaValores();
+void recebePacote(char* topic, byte* payload, unsigned int length);
+
+void setup() {
+  Serial.begin(9600);
+  dht.begin();
+  pinMode(pinoSensorBoia, INPUT);
+  pinMode(pinoBomba, OUTPUT);
+  Serial.println("Planta IoT com ESP32");
+
+  conectaWiFi();
+  MQTT.setServer(BROKER_MQTT, BROKER_PORT);
+  MQTT.setCallback(recebePacote);
+
+}
+
+void loop() {
+
+  mantemConexoes();
+  enviaValores();
+  isTanqueVazio();
+  fazLeituraLDR();
+  fazLeituraUmidadeTempAR();
+
+  digitalWrite(pinoBomba, HIGH);
+  Serial.print("teste1");
+
+  MQTT.loop();
+  //digitalWrite(pinoBomba, LOW);
+  delay(5000);
+}
+
+void loop() {
+  mantemConexoes();
+  enviaValores();
+  MQTT.loop();
+}
+
+void mantemConexoes() {
+  if(!MQTT.connected()) {
+    conectaMQTT();
+  }
+  conectaWiFi();
+}
+
+void conectaWiFi() {
+  if(WiFi.status() == WL_CONNECTED){
+    return;
+  }
+
+  Serial.print("Conectando-se na rede: ");
+  Serial.print(SSID);
+  Serial.println(" Aguarde!");
+
+  WiFi.begin(SSID, PASSWORD);
+  while(WiFi.status() != WL_CONNECTED){
+    delay(100);
+    Serial.print(".");
+  }
+
+  Serial.println();
+  Serial.print("Conectado com sucesso, na rede: ");
+  Serial.print(SSID);
+  Serial.print(" IP obtido: ");
+  Serial.println(WiFi.localIP());
+}
+
+void conectaMQTT(){
+  while(!MQTT.connected()) {
+    Serial.print("Conectando ao BROKER MQTT: ");
+    Serial.println(BROKER_MQTT);
+    if(MQTT.connect(ID_MQTT)) {
+      Serial.println("Conectado ao Broker com sucesso!");
+      MQTT.subscribe(TOPIC_SUBSCRIBE);
+    }
+    else {
+      Serial.println("Não foi possivel se conectar ao broker.");
+      Serial.println("Nova tentativa de conexao em 10s");
+      delay(10000);
+    }
+  }
+}
+
+void fazLeituraUmidadeSolo(void)
 {
   int ValorADC;
   float UmidadePercentual;
@@ -27,23 +135,34 @@ float fazLeituraUmidadeSolo(void)
   ValorADC = analogRead(sensorSolo);
   UmidadePercentual = 100 * ((4095-(float)ValorADC) / 4095);
 
-  return UmidadePercentual;
+  char umidadeSolo[16];
+  sprintf(umidadeSolo, "%.3f", UmidadePercentual);
+  MQTT.publish(TOPIC_UMIDADE_SOLO, umidadeSolo);
 }
 
 void fazLeituraUmidadeTempAR(void)
 {
   float temperatura = dht.readTemperature();
-  Serial.printf("Temperatura: %f\n", temperatura);
+  char tempString[16];
+  sprintf(tempString, "%.3f", temperatura);
+  MQTT.publish(TOPIC_TEMP, tempString);
+
   float umidadeAR = dht.readHumidity();
-  Serial.printf("Umidade AR: %f\n", umidadeAR);
+  char umidadeArString[16];
+  sprintf(umidadeArString, "%.3f", umidadeAR);
+  MQTT.publish(TOPIC_UMIDADE_AR, umidadeArString);
 }
 
 void fazLeituraLDR(void)
 {
   int sensorValue = analogRead(sensorLDR);
   float voltage = sensorValue * (3.3 /4095);
-  Serial.printf("Sensor LDR VOLT: %f\n", voltage);
+  char ldrString[16];
+  sprintf(ldrString, "%.3f", voltage);
+  MQTT.publish(TOPIC_LDR, ldrString);
 }
+
+//TODO colocar uma funão de float to string
 
 int isTanqueVazio(void)
 {
@@ -53,23 +172,25 @@ int isTanqueVazio(void)
   return isVazio;
 }
 
-void setup() {
-  Serial.begin(9600);
-  dht.begin();
-  pinMode(pinoSensorBoia, INPUT);
-  pinMode(pinoBomba, OUTPUT);
-  Serial.println("Planta IoT com ESP32");
-}
+void recebePacote(char* topic, byte* payload, unsigned int length)
+{
+  Serial.print("Recebi mensage: ");
+  Serial.println(topic);
 
-void loop() {
-  float UmidadePercentualLida;
-  isTanqueVazio();
-  fazLeituraLDR();
-  UmidadePercentualLida = fazLeituraUmidadeSolo();
-  Serial.printf("Umidade do solo: %f\n", UmidadePercentualLida);
-  fazLeituraUmidadeTempAR();
-  digitalWrite(pinoBomba, HIGH);
-  Serial.print("teste1");
-  //digitalWrite(pinoBomba, LOW);
-  delay(5000);
+  String msg;
+
+  //obtem a string do payload recebido
+  for(int i=0; i < length; i++)
+  {
+    char c =(char)payload[i];
+    msg += c;
+  }
+
+  if(msg == "0") {
+    digitalWrite(pinoBomba, LOW);
+  }
+
+  if (msg == "1") {
+    digitalWrite(pinoBomba, HIGH);
+  }
 }

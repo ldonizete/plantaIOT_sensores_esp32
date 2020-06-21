@@ -38,13 +38,12 @@ PubSubClient MQTT(wifiClient);
 
 void fazLeituraUmidadeSolo(void);
 void fazLeituraUmidadeTempAR();
-int isTanqueVazio(void);
+void isTanqueVazio(void);
 void fazLeituraLDR();
 
 void mantemConexoes();
 void conectaWiFi();
 void conectaMQTT();
-void enviaValores();
 void recebePacote(char* topic, byte* payload, unsigned int length);
 
 void setup() {
@@ -52,6 +51,7 @@ void setup() {
   dht.begin();
   pinMode(pinoSensorBoia, INPUT);
   pinMode(pinoBomba, OUTPUT);
+  digitalWrite(pinoBomba, HIGH);
   Serial.println("Planta IoT com ESP32");
 
   conectaWiFi();
@@ -63,23 +63,14 @@ void setup() {
 void loop() {
 
   mantemConexoes();
-  enviaValores();
   isTanqueVazio();
   fazLeituraLDR();
   fazLeituraUmidadeTempAR();
-
-  digitalWrite(pinoBomba, HIGH);
-  Serial.print("teste1");
+  fazLeituraUmidadeSolo();
 
   MQTT.loop();
-  //digitalWrite(pinoBomba, LOW);
+  
   delay(5000);
-}
-
-void loop() {
-  mantemConexoes();
-  enviaValores();
-  MQTT.loop();
 }
 
 void mantemConexoes() {
@@ -162,19 +153,21 @@ void fazLeituraLDR(void)
   MQTT.publish(TOPIC_LDR, ldrString);
 }
 
-//TODO colocar uma funão de float to string
-
-int isTanqueVazio(void)
+void isTanqueVazio(void)
 {
   int isVazio = digitalRead(pinoSensorBoia);
-  Serial.printf("Estado sensor: %d\n", isVazio);
 
-  return isVazio;
+  if(isVazio == 0) //Tanque vazio
+  {
+    MQTT.publish(TOPIC_NIVEL_BOIA,"Tanque vazio");
+  }
+
+  MQTT.publish(TOPIC_NIVEL_BOIA,"Tanque Cheio");
 }
 
 void recebePacote(char* topic, byte* payload, unsigned int length)
 {
-  Serial.print("Recebi mensage: ");
+  Serial.print("Recebi mensagem: ");
   Serial.println(topic);
 
   String msg;

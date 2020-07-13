@@ -2,6 +2,7 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <stdio.h>
+#include <string.h>
 #include <float.h>
 #include "DHT.h"
 #include "Wire.h"
@@ -14,6 +15,7 @@ int sensorLDR = 14;
 int sensorSolo = 34;
 int pinoSensorBoia = 25;
 int pinoBomba = 23;
+int pinoLuz = 22;
 
 DHT dht(DHTPIN, DHTTYPE);
 
@@ -27,12 +29,13 @@ const char* BROKER_MQTT = "mqtt.eclipse.org";
 int BROKER_PORT = 1883;
 
 #define ID_MQTT "UMID01"
-#define TOPIC_UMIDADE_AR "TopUmidadeAR"
-#define TOPIC_UMIDADE_SOLO "TopUmidadeSolo"
-#define TOPIC_LDR "TopLDR"
-#define TOPIC_NIVEL_BOIA "TopNivelBoia"
-#define TOPIC_TEMP "TopTemperatura"
-#define TOPIC_SUBSCRIBE "TopBomba"
+#define TOPIC_UMIDADE_AR "topHumidity"
+#define TOPIC_UMIDADE_SOLO "topUmidadeSolo"
+#define TOPIC_LDR "topSensorLDR"
+#define TOPIC_NIVEL_BOIA "topFloatSwitch"
+#define TOPIC_TEMP "topTemperature"
+#define TOPIC_SUBSCRIBE_WATERBOMB "topWaterBomb"
+#define TOPIC_SUBSCRIBE_LIGHT "topLight"
 
 PubSubClient MQTT(wifiClient);
 
@@ -52,16 +55,18 @@ void setup() {
   pinMode(pinoSensorBoia, INPUT);
   pinMode(pinoBomba, OUTPUT);
   digitalWrite(pinoBomba, HIGH);
+  
+  pinMode(pinoLuz, OUTPUT);
+  digitalWrite(pinoLuz, HIGH);
+  
   Serial.println("Planta IoT com ESP32");
 
   conectaWiFi();
   MQTT.setServer(BROKER_MQTT, BROKER_PORT);
   MQTT.setCallback(recebePacote);
-
 }
 
 void loop() {
-
   mantemConexoes();
   isTanqueVazio();
   fazLeituraLDR();
@@ -108,7 +113,8 @@ void conectaMQTT(){
     Serial.println(BROKER_MQTT);
     if(MQTT.connect(ID_MQTT)) {
       Serial.println("Conectado ao Broker com sucesso!");
-      MQTT.subscribe(TOPIC_SUBSCRIBE);
+      MQTT.subscribe(TOPIC_SUBSCRIBE_WATERBOMB);
+      MQTT.subscribe(TOPIC_SUBSCRIBE_LIGHT);
     }
     else {
       Serial.println("Não foi possivel se conectar ao broker.");
@@ -179,11 +185,25 @@ void recebePacote(char* topic, byte* payload, unsigned int length)
     msg += c;
   }
 
-  if(msg == "0") {
+  if(strcmp("topWaterBomb", topic) == 0)
+  {
+    if(msg == "on") {
     digitalWrite(pinoBomba, LOW);
+    }
+
+    if (msg == "off") {
+      digitalWrite(pinoBomba, HIGH);
+    }
   }
 
-  if (msg == "1") {
-    digitalWrite(pinoBomba, HIGH);
+  if(strcmp("topLight", topic) == 0)
+  {
+    if(msg == "on") {
+    digitalWrite(pinoLuz, LOW);
+    }
+
+    if(msg == "off") {
+      digitalWrite(pinoLuz, HIGH);
+    }
   }
 }

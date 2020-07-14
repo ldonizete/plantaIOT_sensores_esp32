@@ -52,8 +52,10 @@ void recebePacote(char* topic, byte* payload, unsigned int length);
 void setup() {
   Serial.begin(9600);
   dht.begin();
+  pinMode(sensorLDR, INPUT);
   pinMode(pinoSensorBoia, INPUT);
   pinMode(pinoBomba, OUTPUT);
+  
   digitalWrite(pinoBomba, HIGH);
   
   pinMode(pinoLuz, OUTPUT);
@@ -152,11 +154,19 @@ void fazLeituraUmidadeTempAR(void)
 
 void fazLeituraLDR(void)
 {
-  int sensorValue = analogRead(sensorLDR);
-  float voltage = sensorValue * (3.3 /4095);
-  char ldrString[16];
-  sprintf(ldrString, "%.3f", voltage);
-  MQTT.publish(TOPIC_LDR, ldrString);
+  int isLight = digitalRead(sensorLDR);
+
+  if(isLight==0)
+  {
+    MQTT.publish(TOPIC_LDR, "light");
+  } else {
+    MQTT.publish(TOPIC_LDR, "dark");
+  }
+  // int sensorValue = analogRead(sensorLDR);
+  // float voltage = sensorValue * (3.3 /4095);
+  // char ldrString[16];
+  // sprintf(ldrString, "%.3f", voltage);
+  // MQTT.publish(TOPIC_LDR, ldrString);
 }
 
 void isTanqueVazio(void)
@@ -165,10 +175,10 @@ void isTanqueVazio(void)
 
   if(isVazio == 0) //Tanque vazio
   {
-    MQTT.publish(TOPIC_NIVEL_BOIA,"Tanque vazio");
-  }
-
-  MQTT.publish(TOPIC_NIVEL_BOIA,"Tanque Cheio");
+    MQTT.publish(TOPIC_NIVEL_BOIA, "empty");
+  } else {
+    MQTT.publish(TOPIC_NIVEL_BOIA,"full");
+  }  
 }
 
 void recebePacote(char* topic, byte* payload, unsigned int length)

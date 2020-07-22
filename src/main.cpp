@@ -39,23 +39,32 @@ int BROKER_PORT = 1883;
 
 PubSubClient MQTT(wifiClient);
 
-void fazLeituraUmidadeSolo(void);
-void fazLeituraUmidadeTempAR();
-void isTanqueVazio(void);
-void fazLeituraLDR();
+float valueMoisture();
+float valueHumidity();
+float valueTemperature();
+bool isTanqueVazio();
+bool valueLDR();
 
 void mantemConexoes();
 void conectaWiFi();
 void conectaMQTT();
 void recebePacote(char* topic, byte* payload, unsigned int length);
 
+//Automatic
+bool isAutomatic = true;
+int moistureSoilMin = 40;
+int startLight = 6;
+int endLight = 18;
+int weeks = 4;
+
 void setup() {
   Serial.begin(9600);
   dht.begin();
+  
   pinMode(sensorLDR, INPUT);
   pinMode(pinoSensorBoia, INPUT);
+
   pinMode(pinoBomba, OUTPUT);
-  
   digitalWrite(pinoBomba, HIGH);
   
   pinMode(pinoLuz, OUTPUT);
@@ -70,10 +79,35 @@ void setup() {
 
 void loop() {
   mantemConexoes();
-  isTanqueVazio();
-  fazLeituraLDR();
-  fazLeituraUmidadeTempAR();
-  fazLeituraUmidadeSolo();
+  bool isEmpty = isTanqueVazio();
+  bool dataLDR = valueLDR();
+  float humidity = valueHumidity();
+  float temperature = valueTemperature();
+  float moisture = valueMoisture();
+
+  //Get system hour
+  time_t rawtime = time(NULL);
+  struct tm *ptm = localtime(&rawtime);
+  int hour = ptm->tm_hour;
+
+  if(isAutomatic==true)
+  {
+    if(moisture < moistureSoilMin)
+    {
+      digitalWrite(pinoBomba, LOW);
+      delay(3000);
+      digitalWrite(pinoBomba, HIGH);
+    }
+
+    if(hour >= startLight && hour <= endLight )
+    {
+      digitalWrite(pinoLuz, LOW);
+    }
+    else {
+      digitalWrite(pinoLuz, HIGH);
+    }
+
+  }
 
   MQTT.loop();
   
@@ -126,7 +160,7 @@ void conectaMQTT(){
   }
 }
 
-void fazLeituraUmidadeSolo(void)
+float valueMoisture()
 {
   int ValorADC;
   float UmidadePercentual;
@@ -137,30 +171,41 @@ void fazLeituraUmidadeSolo(void)
   char umidadeSolo[16];
   sprintf(umidadeSolo, "%.3f", UmidadePercentual);
   MQTT.publish(TOPIC_UMIDADE_SOLO, umidadeSolo);
+
+  return UmidadePercentual;
 }
 
-void fazLeituraUmidadeTempAR(void)
+float valueHumidity()
 {
-  float temperatura = dht.readTemperature();
+  float humidity = dht.readHumidity();
+  char humidityString[16];
+  sprintf(humidityString, "%.3f", humidity);
+  MQTT.publish(TOPIC_UMIDADE_AR, humidityString);
+
+  return humidity;
+}
+
+float valueTemperature()
+{
+  float temp = dht.readTemperature();
   char tempString[16];
-  sprintf(tempString, "%.3f", temperatura);
+  sprintf(tempString, "%.3f", temp);
   MQTT.publish(TOPIC_TEMP, tempString);
 
-  float umidadeAR = dht.readHumidity();
-  char umidadeArString[16];
-  sprintf(umidadeArString, "%.3f", umidadeAR);
-  MQTT.publish(TOPIC_UMIDADE_AR, umidadeArString);
+  return temp;
 }
 
-void fazLeituraLDR(void)
+bool valueLDR(void)
 {
-  int isLight = digitalRead(sensorLDR);
+  int valueLDR = digitalRead(sensorLDR);
 
-  if(isLight==0)
+  if(valueLDR==0)
   {
     MQTT.publish(TOPIC_LDR, "light");
+    return true;
   } else {
     MQTT.publish(TOPIC_LDR, "dark");
+    return false;
   }
   // int sensorValue = analogRead(sensorLDR);
   // float voltage = sensorValue * (3.3 /4095);
@@ -169,15 +214,17 @@ void fazLeituraLDR(void)
   // MQTT.publish(TOPIC_LDR, ldrString);
 }
 
-void isTanqueVazio(void)
+bool isTanqueVazio(void)
 {
   int isVazio = digitalRead(pinoSensorBoia);
 
   if(isVazio == 0) //Tanque vazio
   {
     MQTT.publish(TOPIC_NIVEL_BOIA, "empty");
+    return true;
   } else {
     MQTT.publish(TOPIC_NIVEL_BOIA,"full");
+    return false;
   }  
 }
 

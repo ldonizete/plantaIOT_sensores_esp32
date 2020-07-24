@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <float.h>
+#include <NTPClient.h>
 #include "DHT.h"
 #include "Wire.h"
 #include "SPI.h"
@@ -11,17 +12,23 @@
 #define DHTPIN 4
 #define DHTTYPE DHT11
 
-int sensorLDR = 14;
-int sensorSolo = 34;
+// int sensorLDR = 14;
+int pinMoisture = 34;
 int pinoSensorBoia = 25;
-int pinoBomba = 23;
-int pinoLuz = 22;
+int pinBomb = 23;
+int pinLight = 22;
+int pinFan = 33;
+int pinExhaust = 32;
 
 DHT dht(DHTPIN, DHTTYPE);
 
+//NTP
+WiFiUDP udp;
+NTPClient ntp(udp, "a.st1.ntp.br", -3 * 3600, 60000);
+
 //WiFi
-const char* SSID = "timHabay";
-const char* PASSWORD = "@@32822776@@";
+const char* SSID = "teste";
+const char* PASSWORD = "12345678";
 WiFiClient wifiClient;
 
 //MQTT
@@ -36,14 +43,16 @@ int BROKER_PORT = 1883;
 #define TOPIC_TEMP "topTemperature"
 #define TOPIC_SUBSCRIBE_WATERBOMB "topWaterBomb"
 #define TOPIC_SUBSCRIBE_LIGHT "topLight"
+#define TOPIC_SUBSCRIBE_FAN "topFan"
+#define TOPIC_SUBSCRIBE_EXHAUST "topExhaust"
 
 PubSubClient MQTT(wifiClient);
 
 float valueMoisture();
-float valueHumidity();
-float valueTemperature();
-bool isTanqueVazio();
-bool valueLDR();
+void valueHumidity();
+void valueTemperature();
+void isTanqueVazio();
+// bool valueLDR();
 
 void mantemConexoes();
 void conectaWiFi();
@@ -61,52 +70,60 @@ void setup() {
   Serial.begin(9600);
   dht.begin();
   
-  pinMode(sensorLDR, INPUT);
+  // pinMode(sensorLDR, INPUT);
   pinMode(pinoSensorBoia, INPUT);
 
-  pinMode(pinoBomba, OUTPUT);
-  digitalWrite(pinoBomba, HIGH);
+  pinMode(pinBomb, OUTPUT);
+  digitalWrite(pinBomb, HIGH);
+
+  pinMode(pinFan, OUTPUT);
+  digitalWrite(pinFan, HIGH);
+
+  pinMode(pinExhaust, OUTPUT);
+  digitalWrite(pinExhaust, HIGH);
   
-  pinMode(pinoLuz, OUTPUT);
-  digitalWrite(pinoLuz, HIGH);
+  pinMode(pinLight, OUTPUT);
+  digitalWrite(pinLight, HIGH);
   
   Serial.println("Planta IoT com ESP32");
 
   conectaWiFi();
   MQTT.setServer(BROKER_MQTT, BROKER_PORT);
   MQTT.setCallback(recebePacote);
+  ntp.begin();               // Inicia o protocolo
+  ntp.forceUpdate();
 }
 
 void loop() {
   mantemConexoes();
-  bool isEmpty = isTanqueVazio();
-  bool dataLDR = valueLDR();
-  float humidity = valueHumidity();
-  float temperature = valueTemperature();
+  isTanqueVazio();
+  // bool dataLDR = valueLDR();
+  valueHumidity();
+  valueTemperature();
   float moisture = valueMoisture();
-
-  //Get system hour
-  time_t rawtime = time(NULL);
-  struct tm *ptm = localtime(&rawtime);
-  int hour = ptm->tm_hour;
 
   if(isAutomatic==true)
   {
     if(moisture < moistureSoilMin)
     {
-      digitalWrite(pinoBomba, LOW);
+      digitalWrite(pinBomb, LOW);
       delay(3000);
-      digitalWrite(pinoBomba, HIGH);
+      digitalWrite(pinBomb, HIGH);
     }
+
+    int hour = ntp.getHours(); 
 
     if(hour >= startLight && hour <= endLight )
     {
-      digitalWrite(pinoLuz, LOW);
+      digitalWrite(pinLight, LOW);
+      digitalWrite(pinFan, LOW);
+      digitalWrite(pinExhaust, LOW);
     }
     else {
-      digitalWrite(pinoLuz, HIGH);
+      digitalWrite(pinLight, HIGH);
+      digitalWrite(pinFan, LOW);
+      digitalWrite(pinExhaust, LOW);
     }
-
   }
 
   MQTT.loop();
@@ -151,6 +168,8 @@ void conectaMQTT(){
       Serial.println("Conectado ao Broker com sucesso!");
       MQTT.subscribe(TOPIC_SUBSCRIBE_WATERBOMB);
       MQTT.subscribe(TOPIC_SUBSCRIBE_LIGHT);
+      MQTT.subscribe(TOPIC_SUBSCRIBE_FAN);
+      MQTT.subscribe(TOPIC_SUBSCRIBE_EXHAUST);
     }
     else {
       Serial.println("Não foi possivel se conectar ao broker.");
@@ -165,7 +184,7 @@ float valueMoisture()
   int ValorADC;
   float UmidadePercentual;
 
-  ValorADC = analogRead(sensorSolo);
+  ValorADC = analogRead(pinMoisture);
   UmidadePercentual = 100 * ((4095-(float)ValorADC) / 4095);
 
   char umidadeSolo[16];
@@ -175,56 +194,31 @@ float valueMoisture()
   return UmidadePercentual;
 }
 
-float valueHumidity()
+void valueHumidity()
 {
   float humidity = dht.readHumidity();
   char humidityString[16];
   sprintf(humidityString, "%.3f", humidity);
   MQTT.publish(TOPIC_UMIDADE_AR, humidityString);
-
-  return humidity;
 }
 
-float valueTemperature()
+void valueTemperature()
 {
   float temp = dht.readTemperature();
   char tempString[16];
   sprintf(tempString, "%.3f", temp);
   MQTT.publish(TOPIC_TEMP, tempString);
-
-  return temp;
 }
 
-bool valueLDR(void)
-{
-  int valueLDR = digitalRead(sensorLDR);
-
-  if(valueLDR==0)
-  {
-    MQTT.publish(TOPIC_LDR, "light");
-    return true;
-  } else {
-    MQTT.publish(TOPIC_LDR, "dark");
-    return false;
-  }
-  // int sensorValue = analogRead(sensorLDR);
-  // float voltage = sensorValue * (3.3 /4095);
-  // char ldrString[16];
-  // sprintf(ldrString, "%.3f", voltage);
-  // MQTT.publish(TOPIC_LDR, ldrString);
-}
-
-bool isTanqueVazio(void)
+void isTanqueVazio()
 {
   int isVazio = digitalRead(pinoSensorBoia);
 
   if(isVazio == 0) //Tanque vazio
   {
     MQTT.publish(TOPIC_NIVEL_BOIA, "empty");
-    return true;
   } else {
     MQTT.publish(TOPIC_NIVEL_BOIA,"full");
-    return false;
   }  
 }
 
@@ -245,22 +239,63 @@ void recebePacote(char* topic, byte* payload, unsigned int length)
   if(strcmp("topWaterBomb", topic) == 0)
   {
     if(msg == "on") {
-    digitalWrite(pinoBomba, LOW);
+    digitalWrite(pinBomb, LOW);
     }
 
     if (msg == "off") {
-      digitalWrite(pinoBomba, HIGH);
+      digitalWrite(pinBomb, HIGH);
+    }
+  }
+
+  if(strcmp("topFan", topic) == 0)
+  {
+    if(msg == "on") {
+    digitalWrite(pinFan, LOW);
+    }
+
+    if (msg == "off") {
+      digitalWrite(pinFan, HIGH);
+    }
+  }
+
+  if(strcmp("topExhaust", topic) == 0)
+  {
+    if(msg == "on") {
+    digitalWrite(pinExhaust, LOW);
+    }
+
+    if (msg == "off") {
+      digitalWrite(pinExhaust, HIGH);
     }
   }
 
   if(strcmp("topLight", topic) == 0)
   {
     if(msg == "on") {
-    digitalWrite(pinoLuz, LOW);
+    digitalWrite(pinLight, LOW);
     }
 
     if(msg == "off") {
-      digitalWrite(pinoLuz, HIGH);
+      digitalWrite(pinLight, HIGH);
     }
   }
 }
+
+// bool valueLDR(void)
+// {
+//   int valueLDR = digitalRead(sensorLDR);
+
+//   if(valueLDR==0)
+//   {
+//     MQTT.publish(TOPIC_LDR, "light");
+//     return true;
+//   } else {
+//     MQTT.publish(TOPIC_LDR, "dark");
+//     return false;
+//   }
+  // int sensorValue = analogRead(sensorLDR);
+  // float voltage = sensorValue * (3.3 /4095);
+  // char ldrString[16];
+  // sprintf(ldrString, "%.3f", voltage);
+  // MQTT.publish(TOPIC_LDR, ldrString);
+// }

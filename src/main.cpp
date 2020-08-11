@@ -8,6 +8,9 @@
 #include "DHT.h"
 #include "Wire.h"
 #include "SPI.h"
+#include "esp_camera.h"
+#include <ArduinoJson.h> //ArduinoJSON6
+DynamicJsonDocument CONFIG(2048);
 
 #define DHTPIN 4
 #define DHTTYPE DHT11
@@ -45,6 +48,9 @@ int BROKER_PORT = 1883;
 #define TOPIC_SUBSCRIBE_LIGHT "topLight"
 #define TOPIC_SUBSCRIBE_FAN "topFan"
 #define TOPIC_SUBSCRIBE_EXHAUST "topExhaust"
+#define TOPIC_PHOTO "topTakeAPicture"
+#define TOPIC_CONFIG "topJSONConfig"
+#define TOPIC_UP "topPICTURE"
 
 PubSubClient MQTT(wifiClient);
 
@@ -52,6 +58,10 @@ float valueMoisture();
 void valueHumidity();
 void valueTemperature();
 void isTanqueVazio();
+void take_picture();
+void callback();
+void camera_init();
+void take_picture();
 // bool valueLDR();
 
 void mantemConexoes();
@@ -88,6 +98,7 @@ void setup() {
   Serial.println("Planta IoT com ESP32");
 
   conectaWiFi();
+  camera_init();
   MQTT.setServer(BROKER_MQTT, BROKER_PORT);
   MQTT.setCallback(recebePacote);
   ntp.begin();               // Inicia o protocolo
@@ -147,6 +158,8 @@ void conectaWiFi() {
   Serial.print(SSID);
   Serial.println(" Aguarde!");
 
+  WiFi.mode(WIFI_STA);//pesquisar depois
+  WiFi.setHostname(ID_MQTT);
   WiFi.begin(SSID, PASSWORD);
   while(WiFi.status() != WL_CONNECTED){
     delay(100);
@@ -170,10 +183,13 @@ void conectaMQTT(){
       MQTT.subscribe(TOPIC_SUBSCRIBE_LIGHT);
       MQTT.subscribe(TOPIC_SUBSCRIBE_FAN);
       MQTT.subscribe(TOPIC_SUBSCRIBE_EXHAUST);
+      MQTT.subscribe(TOPIC_PHOTO);
+      MQTT.subscribe(TOPIC_UP);
     }
     else {
       Serial.println("Não foi possivel se conectar ao broker.");
       Serial.println("Nova tentativa de conexao em 10s");
+      Serial.print(MQTT.state());
       delay(10000);
     }
   }
@@ -279,8 +295,86 @@ void recebePacote(char* topic, byte* payload, unsigned int length)
       digitalWrite(pinLight, HIGH);
     }
   }
+
+  if(strcmp("topTakeAPicture", topic) == 0)
+  {
+    Serial.println("PING");
+    take_picture();
+  }
+
+  if (topic == TOPIC_CONFIG) {
+    deserializeJson(CONFIG, msg);
+    Serial.println(msg);
+    sensor_t * s = esp_camera_sensor_get();
+    s->set_framesize(s, FRAMESIZE_VGA); //QVGA|CIF|VGA|SVGA|XGA|SXGA|UXGA
+    s->set_vflip(s, CONFIG["vflip"]); //0 - 1
+    s->set_hmirror(s, CONFIG["hmirror"]); //0 - 1
+    s->set_colorbar(s, CONFIG["colorbar"]); //0 - 1
+    s->set_special_effect(s, CONFIG["special_effect"]); // 0 - 6
+    s->set_quality(s, CONFIG["quality"]); // 0 - 63
+    s->set_brightness(s, CONFIG["brightness"]); // -2 - 2
+    s->set_contrast(s, CONFIG["contrast"]); // -2 - 2
+    s->set_saturation(s, CONFIG["saturation"]); // -2 - 2
+    s->set_sharpness(s, CONFIG["sharpness"]); // -2 - 2
+    s->set_denoise(s, CONFIG["denoise"]); // 0 - 1
+    s->set_awb_gain(s, CONFIG["awb_gain"]); // 0 - 1
+    s->set_wb_mode(s, CONFIG["wb_mode"]); // 0 - 4
+  }
 }
 
+
+void camera_init() {
+  camera_config_t config;
+  config.ledc_channel = LEDC_CHANNEL_0;
+  config.ledc_timer   = LEDC_TIMER_0;
+  config.pin_d0       = 5;
+  config.pin_d1       = 18;
+  config.pin_d2       = 19;
+  config.pin_d3       = 21;
+  config.pin_d4       = 36;
+  config.pin_d5       = 39;
+  config.pin_d6       = 34;
+  config.pin_d7       = 35;
+  config.pin_xclk     = 0;
+  config.pin_pclk     = 22;
+  config.pin_vsync    = 25;
+  config.pin_href     = 23;
+  config.pin_sscb_sda = 26;
+  config.pin_sscb_scl = 27;
+  config.pin_pwdn     = 32;
+  config.pin_reset    = -1;
+  config.xclk_freq_hz = 20000000;
+  config.pixel_format = PIXFORMAT_JPEG;
+
+  config.frame_size   = FRAMESIZE_VGA; // QVGA|CIF|VGA|SVGA|XGA|SXGA|UXGA
+  config.jpeg_quality = 10;           
+  config.fb_count     = 1;
+
+  esp_err_t err = esp_camera_init(&config);
+  if (err != ESP_OK) {
+    Serial.printf("Camera init failed with error 0x%x", err);
+    return;
+  }
+}
+
+void take_picture() {
+  camera_fb_t * fb = NULL;
+  fb = esp_camera_fb_get();
+  if (!fb) {
+    Serial.println("Camera capture failed");
+    return;
+  }
+  if (MQTT_MAX_PACKET_SIZE == 128) {
+    //SLOW MODE (increase MQTT_MAX_PACKET_SIZE)
+    MQTT.publish_P(TOPIC_UP, fb->buf, fb->len, false);
+  }
+  else {
+    //FAST MODE (increase MQTT_MAX_PACKET_SIZE)
+    MQTT.publish(TOPIC_UP, fb->buf, fb->len, false);
+  }
+  Serial.println("CLIC");
+  esp_camera_fb_return(fb);
+}
 // bool valueLDR(void)
 // {
 //   int valueLDR = digitalRead(sensorLDR);

@@ -9,16 +9,20 @@
 #include "Wire.h"
 #include "SPI.h"
 #include <ArduinoJson.h> //ArduinoJSON6
+#include <Adafruit_Sensor.h>
+
 DynamicJsonDocument CONFIG(2048);
+
+//Não usar o pino 12
 
 #define DHTPIN 14
 #define DHTTYPE DHT11
 
-int pinMoisture = 15;//34;
-int pinoSensorBoia = 13;//25;
-int pinBomb = 12;//23;
-int pinLight = 16;//22;
-int pinFan = 0;//33;
+int pinMoisture = 34;
+int pinoSensorBoia = 25;
+int pinBomb = 33;
+int pinLight = 32;
+int pinFan = 26;
 
 DHT dht(DHTPIN, DHTTYPE);
 
@@ -69,8 +73,7 @@ int hourPhoto = 8;
 void setup() {
   Serial.begin(9600);
   dht.begin();
-  
-  // pinMode(sensorLDR, INPUT);
+
   pinMode(pinoSensorBoia, INPUT);
 
   pinMode(pinBomb, OUTPUT);
@@ -183,20 +186,11 @@ float valueMoisture()
 
   ValorADC = analogRead(pinMoisture);
 
-  Serial.println("Valor lido");
-  Serial.println(ValorADC);
-
   UmidadePercentual = 100 * ((4095-(float)ValorADC) / 4095);
 
-  Serial.println("Valor umidade");
-  Serial.println(UmidadePercentual);
-  
   char umidadeSolo[16];
   sprintf(umidadeSolo, "%.3f", UmidadePercentual);
   
-  Serial.println("Valor string");
-  Serial.println(umidadeSolo);
-
   MQTT.publish(TOPIC_UMIDADE_SOLO, umidadeSolo);
 
   return UmidadePercentual;
@@ -224,9 +218,9 @@ void isTanqueVazio()
 
   if(isVazio == 0) //Tanque vazio
   {
-    MQTT.publish(TOPIC_NIVEL_BOIA, "empty");
+    MQTT.publish(TOPIC_NIVEL_BOIA, "vazio");
   } else {
-    MQTT.publish(TOPIC_NIVEL_BOIA,"full");
+    MQTT.publish(TOPIC_NIVEL_BOIA,"cheio");
   }  
 }
 

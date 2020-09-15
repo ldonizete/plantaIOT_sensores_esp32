@@ -35,11 +35,15 @@ const char* SSID = "timHabay";
 const char* PASSWORD = "@@32822776@@";
 WiFiClient wifiClient;
 
+//ID Product
+const char* IDProduct = "5f104a6d3500f222d0086512";
+
 //MQTT
 const char* BROKER_MQTT = "mqtt.eclipse.org";
 int BROKER_PORT = 1883;
 
 #define ID_MQTT "UMID01"
+#define TOPIC_ID_PRODUCT "topIdProduct"
 #define TOPIC_UMIDADE_AR "topHumidity"
 #define TOPIC_UMIDADE_SOLO "topUmidadeSolo"
 #define TOPIC_LDR "topSensorLDR"
@@ -49,6 +53,7 @@ int BROKER_PORT = 1883;
 #define TOPIC_SUBSCRIBE_LIGHT "topLight"
 #define TOPIC_SUBSCRIBE_FAN "topFan"
 #define TOPIC_SUBSCRIBE_EXHAUST "topExhaust"
+#define TOPIC_SUBSCRIBE_AUTO "topAutomatic"
 
 PubSubClient MQTT(wifiClient);
 
@@ -63,12 +68,14 @@ void conectaMQTT();
 void recebePacote(char* topic, byte* payload, unsigned int length);
 
 //Automatic
-bool isAutomatic = true;
 int moistureSoilMin = 40;
 int startLight = 6;
 int endLight = 18;
 int weeks = 4;
 int hourPhoto = 8;
+int lastUploadTime = 0;
+float moisture = 0;
+bool automatic = true;
 
 void setup() {
   Serial.begin(9600);
@@ -84,8 +91,6 @@ void setup() {
   
   pinMode(pinLight, OUTPUT);
   digitalWrite(pinLight, HIGH);
-  
-  Serial.println("Planta IoT com ESP32");
 
   conectaWiFi();
   MQTT.setServer(BROKER_MQTT, BROKER_PORT);
@@ -95,23 +100,32 @@ void setup() {
 }
 
 void loop() {
-  mantemConexoes();
-  isTanqueVazio();
-  valueHumidity();
-  valueTemperature();
-  float moisture = valueMoisture();
-
   int hour = ntp.getHours(); 
+ 
+  if(lastUploadTime==0 || (hour-lastUploadTime)==1)
+  {
+    //Envia o ID
+    MQTT.publish(TOPIC_ID_PRODUCT, IDProduct);
+    lastUploadTime = hour;
+    Serial.println("Primeiro envio");
+    Serial.println(lastUploadTime);
+    mantemConexoes();
+    isTanqueVazio();
+    valueHumidity();
+    valueTemperature();
+    moisture = valueMoisture();
+  }
 
-  if(isAutomatic==true)
+  if(automatic==true)
   {
     if(moisture < moistureSoilMin)
     {
       digitalWrite(pinBomb, LOW);
-      delay(500);
+    }else
+    {
       digitalWrite(pinBomb, HIGH);
     }
-
+    
     if(hour >= startLight && hour <= endLight )
     {
       digitalWrite(pinLight, LOW);
@@ -119,13 +133,11 @@ void loop() {
     }
     else {
       digitalWrite(pinLight, HIGH);
-      digitalWrite(pinFan, LOW);
+      digitalWrite(pinFan, HIGH);
     }
   }
 
   MQTT.loop();
-  
-  delay(5000);
 }
 
 void mantemConexoes() {
@@ -169,6 +181,7 @@ void conectaMQTT(){
       MQTT.subscribe(TOPIC_SUBSCRIBE_LIGHT);
       MQTT.subscribe(TOPIC_SUBSCRIBE_FAN);
       MQTT.subscribe(TOPIC_SUBSCRIBE_EXHAUST);
+      MQTT.subscribe(TOPIC_SUBSCRIBE_AUTO);
     }
     else {
       Serial.println("Não foi possivel se conectar ao broker.");
@@ -226,9 +239,6 @@ void isTanqueVazio()
 
 void recebePacote(char* topic, byte* payload, unsigned int length)
 {
-  Serial.print("Recebi mensagem: ");
-  Serial.println(topic);
-
   String msg;
 
   //obtem a string do payload recebido
@@ -238,36 +248,30 @@ void recebePacote(char* topic, byte* payload, unsigned int length)
     msg += c;
   }
 
-  if(strcmp("topWaterBomb", topic) == 0)
-  {
-    if(msg == "on") {
-    digitalWrite(pinBomb, LOW);
-    }
+  Serial.print("Recebi mensagem: ");
+  Serial.println(topic);
+  Serial.println(msg);
 
-    if (msg == "off") {
-      digitalWrite(pinBomb, HIGH);
-    }
+  if(strcmp("topAutomatic", topic) == 0)
+  {
+    automatic = (msg == "on") ? true : false;
   }
 
-  if(strcmp("topFan", topic) == 0)
+  if(automatic==false)
   {
-    if(msg == "on") {
-    digitalWrite(pinFan, LOW);
+    if(strcmp("topWaterBomb", topic) == 0)
+    {
+      digitalWrite(pinBomb, (msg == "on") ? LOW : HIGH);
     }
 
-    if (msg == "off") {
-      digitalWrite(pinFan, HIGH);
-    }
-  }
-
-  if(strcmp("topLight", topic) == 0)
-  {
-    if(msg == "on") {
-    digitalWrite(pinLight, LOW);
+    if(strcmp("topFan", topic) == 0)
+    {
+      digitalWrite(pinFan, (msg == "on") ? LOW : HIGH);
     }
 
-    if(msg == "off") {
-      digitalWrite(pinLight, HIGH);
+    if(strcmp("topLight", topic) == 0)
+    {
+      digitalWrite(pinLight, (msg == "on") ? LOW : HIGH);
     }
   }
 }

@@ -10,14 +10,17 @@
 #include "SPI.h"
 #include <ArduinoJson.h> //ArduinoJSON6
 #include <Adafruit_Sensor.h>
+#include <HTTPClient.h>
 
 DynamicJsonDocument CONFIG(2048);
 
-//Não usar o pino 12
+char json[400] = {0};
+StaticJsonDocument<256> doc;
 
 #define DHTPIN 14
 #define DHTTYPE DHT11
 
+//Pinos configurados
 int pinMoisture = 34;
 int pinoSensorBoia = 25;
 int pinBomb = 33;
@@ -31,8 +34,8 @@ WiFiUDP udp;
 NTPClient ntp(udp, "a.st1.ntp.br", -3 * 3600, 60000);
 
 //WiFi
-const char* SSID = "timHabay";
-const char* PASSWORD = "@@32822776@@";
+const char* SSID = "Desktop";
+const char* PASSWORD = "32822776";
 WiFiClient wifiClient;
 
 //ID Product
@@ -42,18 +45,16 @@ const char* IDProduct = "5f104a6d3500f222d0086512";
 const char* BROKER_MQTT = "mqtt.eclipse.org";
 int BROKER_PORT = 1883;
 
+//Canais MQTT
 #define ID_MQTT "UMID01"
 #define TOPIC_ID_PRODUCT "topIdProduct"
 #define TOPIC_UMIDADE_AR "topHumidity"
 #define TOPIC_UMIDADE_SOLO "topUmidadeSolo"
-#define TOPIC_LDR "topSensorLDR"
 #define TOPIC_NIVEL_BOIA "topFloatSwitch"
 #define TOPIC_TEMP "topTemperature"
 #define TOPIC_SUBSCRIBE_WATERBOMB "topWaterBomb"
 #define TOPIC_SUBSCRIBE_LIGHT "topLight"
 #define TOPIC_SUBSCRIBE_FAN "topFan"
-#define TOPIC_SUBSCRIBE_EXHAUST "topExhaust"
-#define TOPIC_SUBSCRIBE_AUTO "topAutomatic"
 
 PubSubClient MQTT(wifiClient);
 
@@ -67,15 +68,30 @@ void conectaWiFi();
 void conectaMQTT();
 void recebePacote(char* topic, byte* payload, unsigned int length);
 
+
+
 //Automatic
-int moistureSoilMin = 40;
-int startLight = 6;
-int endLight = 18;
-int weeks = 4;
-int hourPhoto = 8;
+int moistureSoilMin = 0;
+int moistureSoilMax = 0;
+int startLight = 0;
+int endLight = 0;
 int lastUploadTime = 0;
 float moisture = 0;
-bool automatic = true;
+bool irrigar = false;
+int hour = 0;
+bool isConfigured = false;
+
+void resultOfGet(String msg)
+{
+  memset(json,0,sizeof(json));
+  msg.toCharArray(json, 400);
+  deserializeJson(doc, json);
+  JsonObject config = doc["config"];
+  moistureSoilMin = config["moistureSoilMin"]; 
+  moistureSoilMax = config["moistureSoilMax"]; 
+  startLight = config["startLight"]; 
+  endLight = config["endLight"]; 
+}
 
 void setup() {
   Serial.begin(9600);
@@ -97,46 +113,80 @@ void setup() {
   MQTT.setCallback(recebePacote);
   ntp.begin();               // Inicia o protocolo
   ntp.forceUpdate();
+
+  const size_t capacity = JSON_OBJECT_SIZE(1) + JSON_ARRAY_SIZE(8) + 146;
+  DynamicJsonDocument doc(capacity);
 }
 
 void loop() {
-  int hour = ntp.getHours(); 
- 
+  hour = ntp.getHours(); 
+  moisture = valueMoisture();
+  
   if(lastUploadTime==0 || (hour-lastUploadTime)==1)
   {
     //Envia o ID
     MQTT.publish(TOPIC_ID_PRODUCT, IDProduct);
     lastUploadTime = hour;
-    Serial.println("Primeiro envio");
-    Serial.println(lastUploadTime);
     mantemConexoes();
     isTanqueVazio();
     valueHumidity();
     valueTemperature();
-    moisture = valueMoisture();
+
+    char umidadeSolo[16];
+    sprintf(umidadeSolo, "%.2f", moisture);
+    
+    MQTT.publish(TOPIC_UMIDADE_SOLO, umidadeSolo);
   }
 
-  if(automatic==true)
+  //Testar logica
+  if(irrigar==true)
+  {
+    if(moistureSoilMax>=moisture)
+    {
+      digitalWrite(pinBomb, LOW);
+    }
+    else {irrigar=false;}
+  }
+  else if(irrigar==false)
   {
     if(moisture < moistureSoilMin)
     {
-      digitalWrite(pinBomb, LOW);
+      irrigar=true;
     }else
     {
       digitalWrite(pinBomb, HIGH);
     }
-    
-    if(hour >= startLight && hour <= endLight )
-    {
-      digitalWrite(pinLight, LOW);
-      digitalWrite(pinFan, LOW);
-    }
-    else {
-      digitalWrite(pinLight, HIGH);
-      digitalWrite(pinFan, HIGH);
-    }
   }
 
+  if(hour >= startLight && hour < endLight )
+  {
+    digitalWrite(pinLight, LOW);
+    digitalWrite(pinFan, LOW);
+  }
+  else {
+    digitalWrite(pinLight, HIGH);
+    digitalWrite(pinFan, HIGH);
+  }
+
+  if(isConfigured==false)
+  {
+    HTTPClient http;
+
+    http.begin("https://node-grow.herokuapp.com/plants/" + String(IDProduct));
+    int httpCode = http.GET();
+
+    if (httpCode > 0) 
+    { 
+      isConfigured = true;
+      String payload = http.getString();
+      resultOfGet(payload);
+    }else {
+      Serial.println("Error on HTTP request");
+    }
+
+    http.end(); 
+  }
+  
   MQTT.loop();
 }
 
@@ -180,8 +230,6 @@ void conectaMQTT(){
       MQTT.subscribe(TOPIC_SUBSCRIBE_WATERBOMB);
       MQTT.subscribe(TOPIC_SUBSCRIBE_LIGHT);
       MQTT.subscribe(TOPIC_SUBSCRIBE_FAN);
-      MQTT.subscribe(TOPIC_SUBSCRIBE_EXHAUST);
-      MQTT.subscribe(TOPIC_SUBSCRIBE_AUTO);
     }
     else {
       Serial.println("Não foi possivel se conectar ao broker.");
@@ -200,11 +248,6 @@ float valueMoisture()
   ValorADC = analogRead(pinMoisture);
 
   UmidadePercentual = 100 * ((4095-(float)ValorADC) / 4095);
-
-  char umidadeSolo[16];
-  sprintf(umidadeSolo, "%.3f", UmidadePercentual);
-  
-  MQTT.publish(TOPIC_UMIDADE_SOLO, umidadeSolo);
 
   return UmidadePercentual;
 }
@@ -252,26 +295,9 @@ void recebePacote(char* topic, byte* payload, unsigned int length)
   Serial.println(topic);
   Serial.println(msg);
 
-  if(strcmp("topAutomatic", topic) == 0)
-  {
-    automatic = (msg == "on") ? true : false;
-  }
 
-  if(automatic==false)
-  {
-    if(strcmp("topWaterBomb", topic) == 0)
-    {
-      digitalWrite(pinBomb, (msg == "on") ? LOW : HIGH);
-    }
-
-    if(strcmp("topFan", topic) == 0)
-    {
-      digitalWrite(pinFan, (msg == "on") ? LOW : HIGH);
-    }
-
-    if(strcmp("topLight", topic) == 0)
-    {
-      digitalWrite(pinLight, (msg == "on") ? LOW : HIGH);
-    }
-  }
+  // if(strcmp("topWaterBomb", topic) == 0)
+  // {
+  //   digitalWrite(pinBomb, (msg == "on") ? LOW : HIGH);
+  // }  
 }

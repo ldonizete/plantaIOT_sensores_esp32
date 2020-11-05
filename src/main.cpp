@@ -172,7 +172,7 @@ void loop() {
   {
     HTTPClient http;
 
-    http.begin("https://node-grow.herokuapp.com/plants/" + String(IDProduct));
+    http.begin("https://node-grow.herokuapp.com/plants/config/" + String(IDProduct));
     int httpCode = http.GET();
 
     if (httpCode > 0) 

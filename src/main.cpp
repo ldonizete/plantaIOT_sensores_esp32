@@ -55,6 +55,7 @@ int BROKER_PORT = 1883;
 #define TOPIC_SUBSCRIBE_WATERBOMB "topWaterBomb"
 #define TOPIC_SUBSCRIBE_LIGHT "topLight"
 #define TOPIC_SUBSCRIBE_FAN "topFan"
+#define TOPIC_SUBSCRIBE_UPDATE_CONFIG "topUpdateConfig"
 
 PubSubClient MQTT(wifiClient);
 
@@ -67,8 +68,6 @@ void mantemConexoes();
 void conectaWiFi();
 void conectaMQTT();
 void recebePacote(char* topic, byte* payload, unsigned int length);
-
-
 
 //Automatic
 int moistureSoilMin = 0;
@@ -227,9 +226,10 @@ void conectaMQTT(){
     Serial.println(BROKER_MQTT);
     if(MQTT.connect(ID_MQTT)) {
       Serial.println("Conectado ao Broker com sucesso!");
-      MQTT.subscribe(TOPIC_SUBSCRIBE_WATERBOMB);
-      MQTT.subscribe(TOPIC_SUBSCRIBE_LIGHT);
-      MQTT.subscribe(TOPIC_SUBSCRIBE_FAN);
+      // MQTT.subscribe(TOPIC_SUBSCRIBE_WATERBOMB);
+      // MQTT.subscribe(TOPIC_SUBSCRIBE_LIGHT);
+      // MQTT.subscribe(TOPIC_SUBSCRIBE_FAN);
+      MQTT.subscribe(TOPIC_SUBSCRIBE_UPDATE_CONFIG);
     }
     else {
       Serial.println("Não foi possivel se conectar ao broker.");
@@ -295,9 +295,13 @@ void recebePacote(char* topic, byte* payload, unsigned int length)
   Serial.println(topic);
   Serial.println(msg);
 
-
-  // if(strcmp("topWaterBomb", topic) == 0)
-  // {
-  //   digitalWrite(pinBomb, (msg == "on") ? LOW : HIGH);
-  // }  
+  if(strcmp("topUpdateConfig", topic) == 0)
+  {
+    if(msg == "on")
+    {
+      isConfigured = false;
+    }
+   
+    // digitalWrite(pinBomb, (msg == "on") ? LOW : HIGH);
+  }  
 }

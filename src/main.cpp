@@ -39,7 +39,7 @@ const char* PASSWORD = "32822776";
 WiFiClient wifiClient;
 
 //ID Product
-const char* IDProduct = "5f104a6d3500f222d0086512";
+const char* IDProduct = "5f7d97d6845a092fec07cc6b";//"5f104a6d3500f222d0086512";
 
 //MQTT
 const char* BROKER_MQTT = "mqtt.eclipse.org";
@@ -59,6 +59,7 @@ int BROKER_PORT = 1883;
 
 PubSubClient MQTT(wifiClient);
 
+//Declaração das funcoes
 float valueMoisture();
 void valueHumidity();
 void valueTemperature();
@@ -80,6 +81,7 @@ bool irrigar = false;
 int hour = 0;
 bool isConfigured = false;
 
+//Seta as variaveis com a configuração do HTTP
 void resultOfGet(String msg)
 {
   memset(json,0,sizeof(json));
@@ -108,9 +110,10 @@ void setup() {
   digitalWrite(pinLight, HIGH);
 
   conectaWiFi();
+  //Passo a configuracao do MQTT Broker e a porta
   MQTT.setServer(BROKER_MQTT, BROKER_PORT);
-  MQTT.setCallback(recebePacote);
-  ntp.begin();               // Inicia o protocolo
+  MQTT.setCallback(recebePacote);//Recebe os dados 
+  ntp.begin();// Inicia o protocolo de hora
   ntp.forceUpdate();
 
   const size_t capacity = JSON_OBJECT_SIZE(1) + JSON_ARRAY_SIZE(8) + 146;
@@ -118,12 +121,13 @@ void setup() {
 }
 
 void loop() {
-  hour = ntp.getHours(); 
+  hour = ntp.getHours(); //Pega a hora atual
   moisture = valueMoisture();
   
+  //Envia os dados dos sensores via MQTT de 1 em 1 hora
   if(lastUploadTime==0 || (hour-lastUploadTime)==1)
   {
-    //Envia o ID
+    //Envia o ID do produto
     MQTT.publish(TOPIC_ID_PRODUCT, IDProduct);
     lastUploadTime = hour;
     mantemConexoes();
@@ -137,7 +141,7 @@ void loop() {
     MQTT.publish(TOPIC_UMIDADE_SOLO, umidadeSolo);
   }
 
-  //Testar logica
+  //Faz o irrigamento automatico baseado na umidade do solo
   if(irrigar==true)
   {
     if(moistureSoilMax>=moisture)
@@ -157,6 +161,7 @@ void loop() {
     }
   }
 
+  //Deixa ligado até passar da hora
   if(hour >= startLight && hour < endLight )
   {
     digitalWrite(pinLight, LOW);
@@ -167,6 +172,7 @@ void loop() {
     digitalWrite(pinFan, HIGH);
   }
 
+  //Faz requisição HTTP para pegar as configurações da estufa
   if(isConfigured==false)
   {
     HTTPClient http;
@@ -188,14 +194,14 @@ void loop() {
   
   MQTT.loop();
 }
-
+//Mantem a conexao do wifi
 void mantemConexoes() {
   if(!MQTT.connected()) {
     conectaMQTT();
   }
   conectaWiFi();
 }
-
+//Conecta no wifi
 void conectaWiFi() {
   if(WiFi.status() == WL_CONNECTED){
     return;
@@ -205,7 +211,7 @@ void conectaWiFi() {
   Serial.print(SSID);
   Serial.println(" Aguarde!");
 
-  WiFi.mode(WIFI_STA);//pesquisar depois
+  WiFi.mode(WIFI_STA);
   WiFi.setHostname(ID_MQTT);
   WiFi.begin(SSID, PASSWORD);
   while(WiFi.status() != WL_CONNECTED){
@@ -219,16 +225,13 @@ void conectaWiFi() {
   Serial.print(" IP obtido: ");
   Serial.println(WiFi.localIP());
 }
-
+//Conecta no broker do MQTT
 void conectaMQTT(){
   while(!MQTT.connected()) {
     Serial.print("Conectando ao BROKER MQTT: ");
     Serial.println(BROKER_MQTT);
     if(MQTT.connect(ID_MQTT)) {
       Serial.println("Conectado ao Broker com sucesso!");
-      // MQTT.subscribe(TOPIC_SUBSCRIBE_WATERBOMB);
-      // MQTT.subscribe(TOPIC_SUBSCRIBE_LIGHT);
-      // MQTT.subscribe(TOPIC_SUBSCRIBE_FAN);
       MQTT.subscribe(TOPIC_SUBSCRIBE_UPDATE_CONFIG);
     }
     else {
@@ -239,37 +242,48 @@ void conectaMQTT(){
     }
   }
 }
-
+//Verifica a umidade do solo
 float valueMoisture()
 {
   int ValorADC;
   float UmidadePercentual;
 
+  //Faz a leitura do analógica do sensor 
   ValorADC = analogRead(pinMoisture);
 
+  //Faz uma conversão para saber a umidade do solo em %
   UmidadePercentual = 100 * ((4095-(float)ValorADC) / 4095);
 
   return UmidadePercentual;
 }
-
+//Verifica a umidado do ar
 void valueHumidity()
 {
+  //Faz a leitura da umidade do ar
   float humidity = dht.readHumidity();
   char humidityString[16];
-  sprintf(humidityString, "%.3f", humidity);
+  
+  //Converte o dado de float para string
+  sprintf(humidityString, "%.2f", humidity);
+
+  //Publica os dados via MQTT
   MQTT.publish(TOPIC_UMIDADE_AR, humidityString);
 }
-
+//Verifica a temperatura do ambiente
 void valueTemperature()
 {
+  //Faz a leitura da temperatura do ar
   float temp = dht.readTemperature();
   char tempString[16];
-  sprintf(tempString, "%.3f", temp);
+  //Converte o dado de float para string
+  sprintf(tempString, "%.2f", temp);
+  //Publica os dados via MQTT
   MQTT.publish(TOPIC_TEMP, tempString);
 }
-
+//Verifica se o tanque ta vazio
 void isTanqueVazio()
 {
+  //Faz a leitura digital da boia
   int isVazio = digitalRead(pinoSensorBoia);
 
   if(isVazio == 0) //Tanque vazio
@@ -279,7 +293,7 @@ void isTanqueVazio()
     MQTT.publish(TOPIC_NIVEL_BOIA,"cheio");
   }  
 }
-
+//Metódo que recebe pacote via MQTT
 void recebePacote(char* topic, byte* payload, unsigned int length)
 {
   String msg;
@@ -295,8 +309,11 @@ void recebePacote(char* topic, byte* payload, unsigned int length)
   Serial.println(topic);
   Serial.println(msg);
 
+  //Se a mensagem vim desse tópico assinado
   if(strcmp("topUpdateConfig", topic) == 0)
   {
+    //Seta como false a variavel, para fazer a requisição
+    //da configuração da estufa denovo
     if(msg == "on")
     {
       isConfigured = false;
